@@ -1,0 +1,145 @@
+library(shiny)
+library(dplyr)
+library(tidyr)
+library(janitor)
+library(DT)
+library(readxl)
+library(stringr)
+library(lubridate)
+library(jsonlite)
+library(arrow)
+library(caret)
+library(data.table)
+
+# Define the UI
+ui <- fluidPage(
+  titlePanel("Data Cleaning & Preprocessing"),
+  sidebarLayout(
+    sidebarPanel(
+      fileInput("file", "Upload File", accept = c(".csv", ".xlsx", ".json", ".rds")),
+      selectInput("sample_data", "Or Choose a Sample Dataset:", choices = c("None", "mtcars", "iris")),
+      checkboxGroupInput("clean_options", "Select Cleaning Steps:",
+                         choices = list(
+                           "Standardize Column Names" = "standardize",
+                           "Remove Duplicates" = "remove_dupes",
+                           "Handle Missing Values (Mean Imputation)" = "impute_mean",
+                           "Handle Missing Values (Median Imputation)" = "impute_median",
+                           "Trim Whitespace" = "trim_whitespace",
+                           "Convert Text to Lowercase" = "lowercase_text",
+                           "Convert Dates to Standard Format" = "convert_dates",
+                           "Remove Special Characters from Text" = "remove_special_chars",
+                           "Remove Outliers (Z-score > 3)" = "remove_outliers",
+                           "Scale Numeric Variables" = "scale_numeric",
+                           "Normalize Numeric Variables" = "normalize_numeric",
+                           "Log Transform Numeric Variables" = "log_transform",
+                           "Replace Outliers with Mean" = "replace_outliers",
+                           "Encode Ordinal Variables" = "encode_ordinal",
+                           "Drop Columns with High Missing Values" = "drop_high_na",
+                           "Fix Inconsistent Categorical Labels" = "fix_categorical",
+                           "Extract Features from Date" = "extract_date_features"
+                         )),
+      radioButtons("scaling_method", "Choose Scaling Method:",
+                   choices = c("None", "Min-Max Scaling", "Z-score Normalization"),
+                   selected = "None"),
+      checkboxInput("encode_categorical", "Encode Categorical Features (One-Hot Encoding)", FALSE),
+      checkboxInput("handle_outliers", "Handle Outliers (Using IQR)", FALSE),
+      conditionalPanel(
+        condition = "input.handle_outliers == true",
+        radioButtons("outlier_method", "Choose Outlier Handling Method:",
+                     choices = c("Cap Outliers", "Remove Outliers"),
+                     selected = "Cap Outliers")
+      ),
+      actionButton("apply_cleaning", "Clean and Preprocess Data")
+    ),
+    mainPanel(
+      h4("Cleaned Data Preview"),
+      DTOutput("cleaned_data")
+    )
+  )
+)
+
+# Define the Server
+server <- function(input, output, session) {
+  data <- reactiveVal()
+  
+  # Load data from file or sample datasets
+  observeEvent(input$file, {
+    req(input$file)
+    ext <- tools::file_ext(input$file$datapath)
+    df <- switch(ext,
+                 "csv" = read.csv(input$file$datapath, stringsAsFactors = FALSE),
+                 "xlsx" = read_excel(input$file$datapath),
+                 "json" = fromJSON(input$file$datapath, flatten = TRUE) %>% as.data.frame(),
+                 "rds" = readRDS(input$file$datapath),
+                 { showNotification("Unsupported file format!", type = "error"); return() })
+    data(df)
+  })
+  
+  # Load sample datasets
+  observeEvent(input$sample_data, {
+    df <- switch(input$sample_data,
+                 "mtcars" = mtcars,
+                 "iris" = iris,
+                 NULL)
+    if (!is.null(df)) data(df)
+  })
+  
+  # Apply data cleaning and preprocessing
+  cleaned_data <- eventReactive(input$apply_cleaning, {
+    req(data())
+    df <- data()
+    
+    # Data Cleaning Steps
+    if ("standardize" %in% input$clean_options) df <- df %>% clean_names()
+    if ("remove_dupes" %in% input$clean_options) df <- df %>% distinct()
+    if ("impute_mean" %in% input$clean_options) df <- df %>% mutate(across(where(is.numeric), ~replace_na(.x, mean(.x, na.rm = TRUE))))
+    if ("impute_median" %in% input$clean_options) df <- df %>% mutate(across(where(is.numeric), ~replace_na(.x, median(.x, na.rm = TRUE))))
+    if ("trim_whitespace" %in% input$clean_options) df <- df %>% mutate(across(where(is.character), str_trim))
+    if ("lowercase_text" %in% input$clean_options) df <- df %>% mutate(across(where(is.character), tolower))
+    if ("remove_special_chars" %in% input$clean_options) df <- df %>% mutate(across(where(is.character), ~gsub("[^A-Za-z0-9 ]", "", .x)))
+    
+    # Outlier Handling
+    if (input$handle_outliers) {
+      num_cols <- sapply(df, is.numeric)
+      for (col in names(df)[num_cols]) {
+        Q1 <- quantile(df[[col]], 0.25, na.rm = TRUE)
+        Q3 <- quantile(df[[col]], 0.75, na.rm = TRUE)
+        IQR <- Q3 - Q1
+        lower_bound <- Q1 - 1.5 * IQR
+        upper_bound <- Q3 + 1.5 * IQR
+        if (input$outlier_method == "Cap Outliers") {
+          df[[col]][df[[col]] < lower_bound] <- lower_bound
+          df[[col]][df[[col]] > upper_bound] <- upper_bound
+        } else {
+          df <- df[df[[col]] >= lower_bound & df[[col]] <= upper_bound, ]
+        }
+      }
+    }
+    
+    # Scaling
+    if (input$scaling_method != "None") {
+      num_cols <- sapply(df, is.numeric)
+      df[num_cols] <- switch(input$scaling_method,
+                             "Min-Max Scaling" = lapply(df[num_cols], function(x) (x - min(x, na.rm = TRUE)) / (max(x, na.rm = TRUE) - min(x, na.rm = TRUE))),
+                             "Z-score Normalization" = lapply(df[num_cols], function(x) (x - mean(x, na.rm = TRUE)) / sd(x, na.rm = TRUE)),
+                             df[num_cols])
+    }
+    
+    # Categorical Encoding
+    if (input$encode_categorical) {
+      cat_cols <- sapply(df, is.character) | sapply(df, is.factor)
+      if (any(cat_cols)) df <- as.data.frame(model.matrix(~ . - 1, data = df))
+    }
+    
+    df
+  })
+  
+  # Render Cleaned Data Table
+  output$cleaned_data <- renderDT({
+    req(cleaned_data())
+    datatable(cleaned_data())
+  })
+}
+
+# Run the Shiny App
+shinyApp(ui, server)
