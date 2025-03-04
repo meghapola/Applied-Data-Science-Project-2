@@ -1,0 +1,182 @@
+---
+title: "EDA"
+output: html_document
+date: "2025-03-04"
+---
+
+```{r setup}
+library(shiny)
+library(ggplot2)
+library(dplyr)
+library(reshape2)
+library(corrplot)
+
+# UI Part
+ui <- fluidPage(
+  titlePanel("Data Exploration (EDA) Visualization Tool"),
+  
+  sidebarLayout(
+    sidebarPanel(
+      fileInput("file", "Upload CSV File", accept = c(".csv", ".xlsx", ".json", ".rds")),
+      
+      uiOutput("x_var_select"),
+      uiOutput("y_var_select"),
+      selectInput("plot_type", "Select Chart Type", 
+                  choices = c("Bar Chart", "Scatter Plot", "Histogram", "Box Plot", "Density Plot", "Pie Chart", "Line Chart", "Correlation Heatmap")),
+      
+      textInput("plot_title", "Enter Chart Title", value = "Data Visualization"),
+      textInput("x_label", "X-axis Label", value = "X Variable"),
+      textInput("y_label", "Y-axis Label", value = "Y Variable"),
+      
+      actionButton("update", "Update Analysis")
+    ),
+    
+    mainPanel(
+      tabsetPanel(
+        tabPanel("Data Preview", tableOutput("data_preview")),
+        tabPanel("Data Inspection", verbatimTextOutput("data_check")),
+        tabPanel("Categorical Variable Analysis", 
+                 selectInput("cat_var", "Select Categorical Variable", choices = NULL),
+                 tableOutput("cat_summary")),
+        tabPanel("Numerical Variable Analysis", tableOutput("num_summary")),
+        tabPanel("Data Visualization", plotOutput("plot_output"))
+      )
+    )
+  )
+)
+
+# Server Part
+server <- function(input, output, session) {
+  # Load Data
+  data <- reactive({
+    req(input$file)
+    df <- read.csv(input$file$datapath, stringsAsFactors = FALSE)
+    return(df)
+  })
+  
+  # Update variable selection
+  observe({
+    req(data())
+    updateSelectInput(session, "x_var", choices = names(data()), selected = names(data())[1])
+    updateSelectInput(session, "y_var", choices = names(data()), selected = names(data())[2])
+    updateSelectInput(session, "cat_var", choices = names(data())[sapply(data(), is.character)])
+  })
+  
+  output$x_var_select <- renderUI({
+    req(data())
+    selectInput("x_var", "Select X-axis Variable", choices = names(data()))
+  })
+  
+  output$y_var_select <- renderUI({
+    req(data())
+    selectInput("y_var", "Select Y-axis Variable (Optional)", choices = names(data()))
+  })
+  
+  # Display the first five rows of data
+  output$data_preview <- renderTable({
+    req(data())
+    head(data(), 5)
+  })
+  
+  # Data inspection
+  output$data_check <- renderPrint({
+    df <- data()
+    cat("Data Dimensions:", dim(df)[1], "rows,", dim(df)[2], "columns\n")
+    cat("\nColumn Names and Data Types:\n")
+    print(str(df))
+  })
+  
+  # Categorical variable statistics (sorted in descending order)
+  output$cat_summary <- renderTable({
+    req(input$cat_var)
+    df <- data()
+    var <- input$cat_var
+    summary_table <- as.data.frame(table(df[[var]]))
+    colnames(summary_table) <- c("Category", "Frequency")
+    summary_table <- summary_table[order(-summary_table$Frequency), ]  # Sort in descending order
+    return(summary_table)
+  })
+  
+  # Numerical variable statistics
+  output$num_summary <- renderTable({
+    df <- data()
+    num_vars <- names(df)[sapply(df, is.numeric)]
+    if (length(num_vars) == 0) return(data.frame(Variable = NA, Mean = NA, Median = NA, Variance = NA, Standard_Deviation = NA))
+    
+    summary_df <- data.frame(
+      Variable = num_vars,
+      Mean = sapply(df[num_vars], mean, na.rm = TRUE),
+      Median = sapply(df[num_vars], median, na.rm = TRUE),
+      Variance = sapply(df[num_vars], var, na.rm = TRUE),
+      Standard_Deviation = sapply(df[num_vars], sd, na.rm = TRUE)
+    )
+    return(summary_df)
+  })
+  
+  # Data visualization
+  output$plot_output <- renderPlot({
+    req(input$x_var, input$plot_type)
+    df <- data()
+    
+    plot_title <- input$plot_title
+    x_label <- input$x_label
+    y_label <- input$y_label
+    
+    if (input$plot_type == "Bar Chart") {
+      ggplot(df, aes_string(x = input$x_var)) +
+        geom_bar(fill = "steelblue") + 
+        theme_minimal() +
+        ggtitle(plot_title) + xlab(x_label) + ylab("Frequency")
+      
+    } else if (input$plot_type == "Scatter Plot") {
+      req(input$y_var)
+      ggplot(df, aes_string(x = input$x_var, y = input$y_var)) +
+        geom_point(color = "blue") + theme_minimal() +
+        ggtitle(plot_title) + xlab(x_label) + ylab(y_label)
+      
+    } else if (input$plot_type == "Histogram") {
+      ggplot(df, aes_string(x = input$x_var)) +
+        geom_histogram(binwidth = 10, fill = "steelblue", color = "black") +
+        theme_minimal() +
+        ggtitle(plot_title) + xlab(x_label) + ylab("Frequency")
+      
+    } else if (input$plot_type == "Box Plot") {
+      ggplot(df, aes_string(x = "1", y = input$x_var)) +
+        geom_boxplot(fill = "lightblue") + theme_minimal() +
+        ggtitle(plot_title) + xlab("") + ylab(y_label)
+      
+    } else if (input$plot_type == "Density Plot") {
+      ggplot(df, aes_string(x = input$x_var)) +
+        geom_density(fill = "skyblue", alpha = 0.5) + theme_minimal() +
+        ggtitle(plot_title) + xlab(x_label) + ylab("Density")
+      
+    } else if (input$plot_type == "Pie Chart") {
+      df_cat <- df %>% count(!!sym(input$x_var))
+      ggplot(df_cat, aes(x = "", y = n, fill = !!sym(input$x_var))) +
+        geom_bar(stat = "identity", width = 1) +
+        coord_polar("y", start = 0) +
+        theme_void() +
+        ggtitle(plot_title)
+      
+    } else if (input$plot_type == "Line Chart") {
+      req(input$y_var)
+      ggplot(df, aes_string(x = input$x_var, y = input$y_var, group = 1)) +
+        geom_line(color = "blue", size = 1) +
+        geom_point(color = "red", size = 2) + 
+        theme_minimal() +
+        ggtitle(plot_title) + xlab(x_label) + ylab(y_label)
+      
+    } else if (input$plot_type == "Correlation Heatmap") {
+      num_df <- df[sapply(df, is.numeric)]
+      if (ncol(num_df) < 2) return(NULL)
+      corr_matrix <- cor(num_df, use = "pairwise.complete.obs")
+      corrplot(corr_matrix, method = "color", addCoef.col = "black", tl.cex = 0.8, main = plot_title)
+    }
+  })
+}
+
+# Run Shiny App
+shinyApp(ui, server)
+
+```
+
