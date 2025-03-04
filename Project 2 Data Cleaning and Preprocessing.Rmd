@@ -1,0 +1,156 @@
+---
+title: "Project 2 Data Cleaning and Preprocessing"
+output: html_notebook
+---
+
+```{r}
+install.packages("shiny")
+library(shiny)
+library(ggplot2)
+library(ggExtra)
+library(dplyr)
+library(tidyr)
+library(janitor)
+library(DT)
+library(readxl)
+library(stringr)
+library(lubridate)
+
+ui <- fluidPage(
+  titlePanel("Data Cleaning & Preprocessing"),
+  sidebarLayout(
+    sidebarPanel(
+      fileInput("file", "Upload File", accept = c(".csv", ".xlsx", ".json", ".rds")),
+      checkboxGroupInput("clean_options", "Select the Cleaning Steps You Would Like to Apply to Your Dataset:",
+                         choices = list("Standardize Column Names" = "standardize",
+                                        "Remove Duplicates" = "remove_dupes",
+                                        "Handle Missing Values (Mean Imputation)" = "impute_mean",
+                                        "Handle Missing Values (Median Imputation)" = "impute_median",
+                                        "Trim Whitespace" = "trim_whitespace",
+                                        "Convert Text to Lowercase" = "lowercase_text",
+                                        "Convert Dates to Standard Format" = "convert_dates",
+                                        "Remove Special Characters from Text" = "remove_special_chars",
+                                        "Remove Outliers" = "remove_outliers",
+                                        "Scale Numeric Variables" = "scale_numeric",
+                                        "One-Hot Encode Categorical Variables" = "one_hot_encode",
+                                        "Normalize Numeric Variables" = "normalize_numeric",
+                                        "Log Transform Numeric Variables" = "log_transform",
+                                        "Replace Outliers with Mean" = "replace_outliers",
+                                        "Encode Ordinal Variables" = "encode_ordinal",
+                                        "Drop Columns with High Missing Values" = "drop_high_na",
+                                        "Fix Inconsistent Categorical Labels" = "fix_categorical",
+                                        "Extract Features from Date" = "extract_date_features")),
+      actionButton("apply_cleaning", "Apply Cleaning")
+    ),
+    mainPanel(
+      DTOutput("cleaned_data")
+    )
+  )
+)
+
+server <- function(input, output, session) {
+  data <- reactiveVal()
+
+  observeEvent(input$file, {
+    req(input$file)
+    ext <- tools::file_ext(input$file$name)
+    if (ext == "csv") {
+      df <- read.csv(input$file$datapath, stringsAsFactors = FALSE)
+    } else if (ext == "xlsx") {
+      df <- read_excel(input$file$datapath)
+    } else if (ext == "json") {
+      df <- fromJSON(input$file$datapath, flatten = TRUE) %>% as.data.frame()
+    } else if (ext == "rds") {
+      df <- readRDS(input$file$datapath)
+    } else {
+      showNotification("Unsupported file format!", type = "error")
+      return()
+    }
+    data(df)
+  })
+
+  cleaned_data <- eventReactive(input$apply_cleaning, {
+    req(data())
+    df <- data()
+    
+    if ("standardize" %in% input$clean_options) {
+      df <- df %>% clean_names()
+    }
+    
+    if ("remove_dupes" %in% input$clean_options) {
+      df <- df %>% distinct()
+    }
+    
+    if ("impute_mean" %in% input$clean_options) {
+      df <- df %>% mutate(across(where(is.numeric), ~replace_na(.x, mean(.x, na.rm = TRUE))))
+    }
+    
+    if ("impute_median" %in% input$clean_options) {
+      df <- df %>% mutate(across(where(is.numeric), ~replace_na(.x, median(.x, na.rm = TRUE))))
+    }
+    
+    if ("trim_whitespace" %in% input$clean_options) {
+      df <- df %>% mutate(across(where(is.character), str_trim))
+    }
+    
+    if ("lowercase_text" %in% input$clean_options) {
+      df <- df %>% mutate(across(where(is.character), tolower))
+    }
+    
+    if ("convert_dates" %in% input$clean_options) {
+      df <- df %>% mutate(across(where(is.character), ~if_else(!is.na(as.Date(.x, format = "%Y-%m-%d")), as.Date(.x, format = "%Y-%m-%d"), .x)))
+    }
+    
+    if ("remove_special_chars" %in% input$clean_options) {
+      df <- df %>% mutate(across(where(is.character), ~gsub("[^A-Za-z0-9 ]", "", .x)))
+    }
+    
+    if ("remove_outliers" %in% input$clean_options) {
+      df <- df %>% filter(across(where(is.numeric), ~ abs(scale(.x)) < 3))
+    }
+    
+    if ("scale_numeric" %in% input$clean_options) {
+      df <- df %>% mutate(across(where(is.numeric), scale))
+    }
+    
+    if ("normalize_numeric" %in% input$clean_options) {
+      df <- df %>% mutate(across(where(is.numeric), ~ (.x - min(.x, na.rm = TRUE)) / (max(.x, na.rm = TRUE) - min(.x, na.rm = TRUE))))
+    }
+    
+    if ("log_transform" %in% input$clean_options) {
+      df <- df %>% mutate(across(where(is.numeric), ~ ifelse(.x > 0, log(.x), .x)))
+    }
+    
+    if ("replace_outliers" %in% input$clean_options) {
+      df <- df %>% mutate(across(where(is.numeric), ~ ifelse(abs(scale(.x)) > 3, mean(.x, na.rm = TRUE), .x)))
+    }
+    
+    if ("encode_ordinal" %in% input$clean_options) {
+      df <- df %>% mutate(across(where(is.factor), as.numeric))
+    }
+    
+    if ("drop_high_na" %in% input$clean_options) {
+      df <- df %>% select(where(~ mean(is.na(.)) < 0.5))
+    }
+    
+    if ("fix_categorical" %in% input$clean_options) {
+      df <- df %>% mutate(across(where(is.character), ~ str_to_title(.x)))
+    }
+    
+    if ("extract_date_features" %in% input$clean_options) {
+      df <- df %>% mutate(year = year(df$date), month = month(df$date), day = day(df$date))
+    }
+    
+    df
+  })
+  
+  output$cleaned_data <- renderDT({
+    req(cleaned_data())
+    datatable(cleaned_data())
+  })
+}
+
+shinyApp(ui, server)
+
+
+```
