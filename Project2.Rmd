@@ -1,0 +1,36 @@
+---
+title: "Project2"
+output: html_document
+date: "2025-03-04"
+---
+
+```{r}
+fileInput("file", "Upload Dataset", accept = c(".csv", ".xlsx", ".json", ".rds"))
+
+raw_data <- reactive({
+    req(input$file)  # Ensure file is uploaded
+    ext <- tools::file_ext(input$file$datapath) #getting the file extensions, input$file$datapath refers to the path where the uploaded file is temporarily stored on the server 
+    if (ext == "csv") {
+        return(read.csv(input$file$datapath, stringsAsFactors = FALSE)) #loading different file formats 
+    } else if (ext == "xlsx") {
+        return(readxl::read_excel(input$file$datapath))
+    } else if (ext == "json") {
+        return(jsonlite::fromJSON(input$file$datapath))
+    } else if (ext == "rds") {
+        return(readRDS(input$file$datapath))
+    } else {
+        return(NULL) #handling unsupported file formats 
+    }
+})
+
+observeEvent(input$sample_data, {
+    if (input$sample_data == "mtcars") {
+        raw_data(mtcars)
+    } else if (input$sample_data == "iris") {
+        raw_data(iris)
+    }
+})
+
+output$raw_data <- renderDT({ raw_data() })
+```
+
