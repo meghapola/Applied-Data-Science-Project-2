@@ -14,6 +14,7 @@ ui <- dashboardPage(
       menuItem("Scaling", tabName = "scaling", icon = icon("arrows-alt-v")),
       menuItem("Encoding", tabName = "encoding", icon = icon("font")),
       menuItem("Polynomial", tabName = "polynomial", icon = icon("superscript")),
+      menuItem("Interaction", tabName = "interaction", icon = icon("times")),
       menuItem("Datetime", tabName = "datetime", icon = icon("calendar")),
       menuItem("Save", tabName = "save", icon = icon("save"))
     )
@@ -75,6 +76,14 @@ ui <- dashboardPage(
                 box(width = 8, title = "Data Preview After Polynomial", status = "success",
                     DTOutput("polyTable")
                 )
+              )
+      ),
+      tabItem(tabName = "interaction",
+              fluidRow(
+                box(width = 4, title = "Interaction Features", status = "primary",
+                    uiOutput("interactionUI"), actionButton("applyInteraction", "Apply Interaction")
+                ),
+                box(width = 8, title = "Data Preview After Interaction", status = "primary", DTOutput("interactionTable"))
               )
       ),
       tabItem(tabName = "datetime",
@@ -205,6 +214,21 @@ server <- function(input, output, session) {
     req(rv$transformedData)
     datatable(rv$transformedData, options = list(pageLength = 5, scrollX = TRUE))
   })
+  
+  output$interactionUI <- renderUI({
+    numCols <- names(rv$transformedData)[sapply(rv$transformedData, is.numeric)]
+    tagList(selectInput("intCol1", "Column 1:", numCols),
+            selectInput("intCol2", "Column 2:", numCols))
+  })
+  
+  observeEvent(input$applyInteraction, {
+    newCol <- paste0(input$intCol1, "_x_", input$intCol2)
+    rv$transformedData[[newCol]] <- rv$transformedData[[input$intCol1]] * rv$transformedData[[input$intCol2]]
+  })
+  
+  output$interactionTable <- renderDT({req(rv$transformedData)
+                                      datatable(rv$transformedData, options = list(pageLength = 5, scrollX = TRUE))
+})
   
   output$downloadData <- downloadHandler(
     filename = function() paste0("transformed_data_", Sys.Date(), ".csv"),
