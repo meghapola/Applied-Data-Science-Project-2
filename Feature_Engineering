@@ -6,7 +6,7 @@ library(lubridate)
 
 ui <- dashboardPage(
   
-  dashboardHeader(title = "Feature Engineering App (No Recipes)"),
+  dashboardHeader(title = "Feature Engineering App"),
   
   dashboardSidebar(
     sidebarMenu(
